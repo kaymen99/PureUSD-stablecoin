@@ -291,6 +291,10 @@ contract DSCController {
     //    Internal    //
     // ************** //
 
+    /// @notice sets new collateral price feed and add to allowed list
+    /// @dev collateral token can only be allowed once
+    /// @param token address of collateral token
+    /// @param priceFeed address of the chainlink price feed, should be different from address(0)
     function _allowCollateral(address token, address priceFeed) internal {
         if (allowedCollaterals[token] != address(0))
             revert AlreadyAllowed(token);
@@ -301,6 +305,10 @@ contract DSCController {
         emit AllowCollateral(token);
     }
 
+    /// @notice calculate user health factor
+    /// @dev health factor is the ratio between total collateral value (in USD) and total minted DSC for a given user
+    /// @param user address of the user
+    /// @return factor : health factor scaled by 1e18
     function _calculateHealthFactor(
         address user
     ) internal view returns (uint256 factor) {
@@ -310,12 +318,21 @@ contract DSCController {
         factor = (collateralBalanceInUSD * PRECISION) / dscBalance;
     }
 
+    /// @notice Perform health factor check
+    /// @dev will revert if user's health factor is below min value
+    /// @param user address of the user
     function _revertIfBelowHealthFactor(address user) internal view {
         uint256 _healthFactor = _calculateHealthFactor(user);
         if (_healthFactor < MIN_HEALTH_FACTOR)
             revert BelowMinHealthFactor(_healthFactor);
     }
 
+    /// @notice withdraw collateral token
+    /// @dev should be called in public function that implemented health factor check
+    /// @param from address to withdraw collateral from
+    /// @param to address to send collateral to
+    /// @param token address of collateral token to withdraw
+    /// @param amount amount of collateral token to withdraw
     function _withdraw(
         address from,
         address to,
@@ -329,6 +346,10 @@ contract DSCController {
         emit WithdrawCollateral(from, to, token, amount);
     }
 
+    /// @notice burn DSC token from user
+    /// @dev user must have approved DSC token transfer
+    /// @param from address to burn token from
+    /// @param amount amount of DSC token to burn
     function _burnDSC(address from, uint256 amount) private {
         if (amount != 0) {
             mintedBalances[from] -= amount;
