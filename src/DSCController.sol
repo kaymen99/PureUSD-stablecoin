@@ -3,11 +3,13 @@
 pragma solidity ^0.8.18;
 
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {FlashOperations} from "./FlashOperations.sol";
 import {ChainlinkOracle} from "./libraries/ChainlinkOracle.sol";
 import {TokenHelper} from "./libraries/TokenHelper.sol";
 import "./interfaces/IDSCToken.sol";
 
-contract DSCController {
+contract DSCController is FlashOperations, Ownable {
     using ChainlinkOracle for AggregatorV3Interface;
 
     // *************** //
@@ -22,7 +24,7 @@ contract DSCController {
     // Using 200% overcollateralization
     uint256 public constant MIN_HEALTH_FACTOR = 2e18;
 
-    IDSCToken public immutable dscToken;
+    IDSCToken private immutable dscToken;
 
     mapping(address token => address priceFeedAddress)
         private allowedCollaterals;
@@ -59,9 +61,10 @@ contract DSCController {
 
     constructor(
         address dscTokenAddress,
+        address _feeRecipient,
         address[] memory collaterals,
         address[] memory priceFeeds
-    ) {
+    ) Ownable(msg.sender) FlashOperations(_feeRecipient) {
         if (collaterals.length != priceFeeds.length) revert ArrayMismatch();
         for (uint256 i = 0; i < collaterals.length; ) {
             _allowCollateral(collaterals[i], priceFeeds[i]);
@@ -83,13 +86,12 @@ contract DSCController {
     /// @param amount amount of collateral to deposit
     function deposit(address token, address recipient, uint256 amount) public {
         if (amount == 0) revert InvalidAmount();
-        if (allowedCollaterals[token] == address(0))
-            revert NotAllowedCollateral(token);
+        allowedToken(token);
         unchecked {
             // cannot overflow because transfer will revert
             collateralBalances[recipient][token] += amount;
         }
-        TokenHelper.transferERC20(token, msg.sender, address(this), amount);
+        TokenHelper.transferToken(token, msg.sender, address(this), amount);
         emit CollateralDeposit(recipient, token, amount);
     }
 
@@ -287,6 +289,40 @@ contract DSCController {
         value = (amountIn18Decimals * price * 1e10) / PRECISION;
     }
 
+    function allowedToken(address token) public view override {
+        if (allowedCollaterals[token] == address(0))
+            revert NotAllowedCollateral(token);
+    }
+
+    function DSCToken() public view override returns (IDSCToken) {
+        return dscToken;
+    }
+
+    // ******************** //
+    //    Owner Functions   //
+    // ******************** //
+
+    /// @notice set new fee recipient
+    /// @dev only callable by onwer
+    /// @param recipient address of new recipient, must be non-zero.
+    function setFeeRecipient(address recipient) external onlyOwner {
+        _setFeeRecipient(recipient);
+    }
+
+    /// @notice set new flash ops fee
+    /// @dev only callable by onwer
+    /// @param newFee new fee percentage.
+    function setFlashOpsFee(uint256 newFee) external onlyOwner {
+        _setFlashOpsFee(newFee);
+    }
+
+    /// @notice change flash operations paused state
+    /// @dev only callable by onwer
+    /// @param pause true for paused, false otherwise.
+    function pauseFlashOps(bool pause) external onlyOwner {
+        _pauseFlashOps(pause);
+    }
+
     // ************** //
     //    Internal    //
     // ************** //
@@ -339,10 +375,9 @@ contract DSCController {
         address token,
         uint256 amount
     ) private {
-        if (allowedCollaterals[token] == address(0))
-            revert NotAllowedCollateral(token);
+        allowedToken(token);
         collateralBalances[from][token] -= amount;
-        TokenHelper.transferERC20(token, address(this), to, amount);
+        TokenHelper.transferToken(token, address(this), to, amount);
         emit WithdrawCollateral(from, to, token, amount);
     }
 
@@ -353,7 +388,7 @@ contract DSCController {
     function _burnDSC(address from, uint256 amount) private {
         if (amount != 0) {
             mintedBalances[from] -= amount;
-            TokenHelper.transferERC20(
+            TokenHelper.transferToken(
                 address(dscToken),
                 msg.sender,
                 address(this),
