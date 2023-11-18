@@ -11,33 +11,26 @@ library TokenHelper {
         decimals = IERC20Metadata(token).decimals();
     }
 
-    function transferToken(
-        address _token,
-        address _from,
-        address _to,
-        uint256 _amount
-    ) internal {
-        if (_amount == 0) {
-            return;
-        }
-        if (_token == address(0)) {
-            transferNativeToken(_to, _amount);
-        } else {
-            transferERC20(_token, _from, _to, _amount);
-        }
+    function balanceOf(
+        address token,
+        address _account
+    ) internal view returns (uint256) {
+        return IERC20(token).balanceOf(_account);
     }
 
-    function transferERC20(
-        address _token,
-        address _from,
-        address _to,
-        uint256 _amount
+    function transferToken(
+        address token,
+        address from,
+        address to,
+        uint256 amount
     ) internal {
-        if (_from == address(this)) {
-            IERC20(_token).transfer(_to, _amount);
+        bool success;
+        if (from == address(this)) {
+            success = IERC20(token).transfer(to, amount);
         } else {
-            IERC20(_token).transferFrom(_from, _to, _amount);
+            success = IERC20(token).transferFrom(from, to, amount);
         }
+        require(success);
     }
 
     function transferNativeToken(address to, uint256 value) internal {
