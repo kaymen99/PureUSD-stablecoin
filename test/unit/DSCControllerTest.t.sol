@@ -4,7 +4,7 @@ pragma solidity ^0.8.18;
 
 import {Test, console} from "forge-std/Test.sol";
 import {DeployDSC, DSCController, DSCToken, HelperConfig} from "../../script/DeployDSC.s.sol";
-import {ERC20Mock} from "@openzeppelin/contracts/mocks/ERC20Mock.sol";
+import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 contract DSCControllerTest is Test {
@@ -38,7 +38,7 @@ contract DSCControllerTest is Test {
     address[] public priceFeedAddresses;
 
     function testDSCTokenAddressSet() public {
-        assertEq(address(controller.dscToken()), address(dscToken));
+        assertEq(address(controller.DSCToken()), address(dscToken));
     }
 
     function testRevertIfArrayMismatch() public {
@@ -48,6 +48,7 @@ contract DSCControllerTest is Test {
         vm.expectRevert(DSCController.ArrayMismatch.selector);
         new DSCController(
             address(dscToken),
+            msg.sender,
             tokenAddresses,
             priceFeedAddresses
         );
@@ -63,6 +64,7 @@ contract DSCControllerTest is Test {
         );
         new DSCController(
             address(dscToken),
+            msg.sender,
             tokenAddresses,
             priceFeedAddresses
         );
