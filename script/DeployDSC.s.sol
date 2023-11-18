@@ -30,6 +30,7 @@ contract DeployDSC is Script {
         DSCToken dscToken = new DSCToken();
         DSCController controller = new DSCController(
             address(dscToken),
+            msg.sender,
             tokenAddresses,
             priceFeedAddresses
         );
