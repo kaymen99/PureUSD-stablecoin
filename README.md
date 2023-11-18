@@ -1,66 +1,57 @@
-## Foundry
+# Algorithmic Stablecoin
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+This protocol is a custom algorithmic stablecoin system, where the DSC token is pegged to the USD price at a 1:1 ratio (1 DSC = 1 $). The DSC token will be backed by two collateral tokens (ERC20): WETH and WBTC. Users can deposit either or both of these tokens and mint DSC tokens, they can hold the DSC tokens as long as their collateralization remains above the liquidation threshold (collateral value must be greater than double the minted DSC value, indicating a 200% collateralization ratio).
 
-Foundry consists of:
+Additionally, the protocol will support flashloan operations, this will enable users to borrow either collateral (WETH or WBTC) tokens or DSC tokens, subject to a small fee paid to the protocol.
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+The project is built with foundry and uses the Openzeppelin and Chainlink as externals libraries.
 
-## Documentation
+## Key Features
 
-https://book.getfoundry.sh/
+* **DSC Minting/Burning**: Users are required to deposit collateral assets (WETH or WBTC) into the controller contract to mint DSC tokens. At any moment users will be able to burn the minted DSC tokens and withdraw their collateral.
 
-## Usage
+* **Overcollateralization**: The protocol maintains a 200% collateralization ratio, ensuring that a user's collateral value always exceeds their minted DSC tokens. If a user falls below this threshold, their collateral will be liquidated to uphold protocol solvency and guarantee the DSC's peg to USD.
 
-### Build
+* **Flash Minting**: The controller will support flash minting of DSC tokens, allowing users to mint DSC tokens without the need for upfront collateral deposit.
+
+* **Flash Loans**: Users have the option to perform flashloans on collateral tokens (WETH or WBTC) held in the controller.
+
+* **Price Oracle**: Asset prices in USD are determined using the Chainlink oracle price feeds, ensuring reliable and up-to-date pricing information.
+  
+* **Protocol Fee**: The protocol only implements fees on flashloan operations, capped at a maximum of 1% of the amount borrowed.
+
+## Quick Start
 
 ```shell
+$ git clone https://github.com/kaymen99/algorithmic-stablecoin
+$ cd algorithmic-stablecoin
 $ forge build
 ```
 
-### Test
+## Usage
+
+### Deploy
+
+```shell
+$ forge script script/DeployDSC.s.sol:DeployDSC --rpc-url <your_rpc_url> --private-key <your_private_key>
+```
+
+### Runs all of the tests
 
 ```shell
 $ forge test
 ```
 
-### Format
+### Displays the test coverage of the contracts
 
 ```shell
-$ forge fmt
+$ forge coverage
 ```
 
-### Gas Snapshots
+## Contact
 
-```shell
-$ forge snapshot
-```
+I welcome any contributions, feel free to open issues, submit pull requests, or if you want to collaborate or have any questions, reach out to me: aymenMir1001@gmail.com
 
-### Anvil
+## License
 
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+Distributed under the MIT License. See `LICENSE.txt` for more information.
