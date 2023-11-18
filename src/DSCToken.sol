@@ -18,7 +18,10 @@ contract DSCToken is ERC20Burnable, Ownable {
     error InvalidBurnAmount();
     error AmountExceedsBalance();
 
-    constructor() ERC20("Decentralized StableCoin", "DSC") {}
+    constructor()
+        ERC20("Decentralized StableCoin", "DSC")
+        Ownable(msg.sender)
+    {}
 
     // ***************** //
     //  Public/external  //
@@ -47,9 +50,16 @@ contract DSCToken is ERC20Burnable, Ownable {
         super.burn(amount);
     }
 
-    /// @notice Openzeppelin ERC20Burnable function, not supported for DSC token
-    /// @dev Always reverts
-    function burnFrom(address account, uint256 value) public override {
-        revert("Not Supported");
+    /// @notice Allow controller to burn DSC tokens from specific address
+    /// @dev used during flashMint operation, only callable by controller
+    /// @param account address to burn DSC from
+    /// @param amount amount of DSC tokens to burn
+    function burnFrom(
+        address account,
+        uint256 amount
+    ) public override onlyOwner {
+        if (amount == 0) revert InvalidBurnAmount();
+        if (balanceOf(account) < amount) revert AmountExceedsBalance();
+        super.burnFrom(account, amount);
     }
 }
