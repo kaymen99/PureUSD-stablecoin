@@ -61,10 +61,11 @@ contract DSCController is FlashOperations, Ownable {
 
     constructor(
         address dscTokenAddress,
+        address admin,
         address _feeRecipient,
         address[] memory collaterals,
         address[] memory priceFeeds
-    ) Ownable(msg.sender) FlashOperations(_feeRecipient) {
+    ) Ownable(admin) FlashOperations(_feeRecipient) {
         if (collaterals.length != priceFeeds.length) revert ArrayMismatch();
         for (uint256 i = 0; i < collaterals.length; ) {
             _allowCollateral(collaterals[i], priceFeeds[i]);
