@@ -48,7 +48,7 @@ abstract contract FlashOperations {
     error InvalidFeeBPS();
 
     constructor(address _feeRecipient) {
-        feeRecipient = _feeRecipient;
+        _setFeeRecipient(_feeRecipient);
     }
 
     // ***************** //
@@ -74,7 +74,7 @@ abstract contract FlashOperations {
         if (address(receiver).code.length == 0 || amount == 0)
             revert InvalidFlashOp();
         if (opType == FlashOperationType.MINT) {
-            if (token == address(DSCToken())) revert InvalidFlashOp();
+            if (token != address(DSCToken())) revert InvalidFlashOp();
             _runFlashMint(receiver, amount, params);
         } else {
             allowedToken(token);
@@ -171,7 +171,7 @@ abstract contract FlashOperations {
 
         // check that internal token balance did not decrease
         uint256 balanceAfter = TokenHelper.balanceOf(token, address(this));
-        if (balanceAfter >= balanceBefore) revert TokenBalanceDecrease();
+        if (balanceAfter < balanceBefore) revert TokenBalanceDecrease();
     }
 
     /// @notice internal function to set new fee recipient
