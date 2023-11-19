@@ -4,8 +4,10 @@ pragma solidity ^0.8.18;
 
 import {Test, console} from "forge-std/Test.sol";
 import {DeployDSC, DSCController, DSCToken, HelperConfig} from "../../script/DeployDSC.s.sol";
+import {FlashOperations} from "../../src/FlashOperations.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
+import {FlashloanReceiverMock, BadFlashloanReceiverMock} from "../mocks/FlashloanReceiverMock.sol";
 
 contract DSCControllerTest is Test {
     DeployDSC deployer;
@@ -18,8 +20,10 @@ contract DSCControllerTest is Test {
     address public wethUSDPriceFeed;
     address public wbtcUSDPriceFeed;
 
-    address public user = address(1);
-    uint256 public depositAmount = 3 ether; // 3 ETH
+    address public owner = address(1);
+    address public feeRecipient = address(2);
+    address public user = address(3);
+    uint256 public wethDepositAmount = 3 ether; // 3 ETH
     uint256 public wbtcDepositAmount = 10e8; // 10 WBTC
     uint256 public mintAmount = 1000 ether; // 1000 USD = 1000 DSC
 
@@ -30,15 +34,38 @@ contract DSCControllerTest is Test {
             .activeConfig();
     }
 
-    // ************************** //
-    //      Correct deployment    //
-    // ************************** //
+    // ************************ //
+    //    Correct deployment    //
+    // ************************ //
 
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
 
     function testDSCTokenAddressSet() public {
         assertEq(address(controller.DSCToken()), address(dscToken));
+    }
+
+    function testOwnerAddressSet() public {
+        assertEq(address(controller.owner()), owner);
+    }
+
+    function testFeeRecipientAddressSet() public {
+        assertEq(address(controller.feeRecipient()), feeRecipient);
+    }
+
+    function testRevertIfFeeRecipientIsZeroAddress() public {
+        tokenAddresses.push(weth);
+        tokenAddresses.push(wbtc);
+        priceFeedAddresses.push(wethUSDPriceFeed);
+        priceFeedAddresses.push(wbtcUSDPriceFeed);
+        vm.expectRevert(FlashOperations.InvalidFeeRecipient.selector);
+        new DSCController(
+            address(dscToken),
+            owner,
+            address(0),
+            tokenAddresses,
+            priceFeedAddresses
+        );
     }
 
     function testRevertIfArrayMismatch() public {
@@ -48,7 +75,8 @@ contract DSCControllerTest is Test {
         vm.expectRevert(DSCController.ArrayMismatch.selector);
         new DSCController(
             address(dscToken),
-            msg.sender,
+            owner,
+            feeRecipient,
             tokenAddresses,
             priceFeedAddresses
         );
@@ -64,7 +92,8 @@ contract DSCControllerTest is Test {
         );
         new DSCController(
             address(dscToken),
-            msg.sender,
+            owner,
+            feeRecipient,
             tokenAddresses,
             priceFeedAddresses
         );
@@ -76,9 +105,9 @@ contract DSCControllerTest is Test {
         assertEq(controller.getTokenPriceFeed(wbtc), wbtcUSDPriceFeed);
     }
 
-    // ************************************ //
-    //      Deposit Collateral & Mint DSC   //
-    // ************************************ //
+    // *********************************** //
+    //    Deposit Collateral & Mint DSC    //
+    // *********************************** //
 
     function testRevertIfDepositZeroAmount() public {
         vm.startPrank(user);
@@ -95,30 +124,36 @@ contract DSCControllerTest is Test {
                 token
             )
         );
-        controller.deposit(address(token), msg.sender, depositAmount);
+        controller.deposit(address(token), msg.sender, wethDepositAmount);
     }
 
     function testRevertIfUserDidNotApprove() public {
         vm.startPrank(user);
-        ERC20Mock(weth).mint(user, depositAmount);
+        ERC20Mock(weth).mint(user, wethDepositAmount);
         vm.expectRevert();
-        controller.deposit(weth, user, depositAmount);
+        controller.deposit(weth, user, wethDepositAmount);
     }
 
     function testDepositCorrectAmountAndSendFunds() public {
         vm.startPrank(user);
-        ERC20Mock(weth).mint(user, depositAmount);
-        ERC20Mock(weth).approve(address(controller), depositAmount);
-        controller.deposit(weth, user, depositAmount);
-        assertEq(controller.getUserCollateralAmount(user, weth), depositAmount);
-        assertEq(ERC20Mock(weth).balanceOf(address(controller)), depositAmount);
+        ERC20Mock(weth).mint(user, wethDepositAmount);
+        ERC20Mock(weth).approve(address(controller), wethDepositAmount);
+        controller.deposit(weth, user, wethDepositAmount);
+        assertEq(
+            controller.getUserCollateralAmount(user, weth),
+            wethDepositAmount
+        );
+        assertEq(
+            ERC20Mock(weth).balanceOf(address(controller)),
+            wethDepositAmount
+        );
         vm.stopPrank();
     }
 
     function testRevertIfMintWithoutCollateralDeposited() public {
         vm.startPrank(user);
-        ERC20Mock(weth).mint(user, depositAmount);
-        ERC20Mock(weth).approve(address(controller), depositAmount);
+        ERC20Mock(weth).mint(user, wethDepositAmount);
+        ERC20Mock(weth).approve(address(controller), wethDepositAmount);
         vm.expectRevert(
             abi.encodeWithSelector(
                 DSCController.BelowMinHealthFactor.selector,
@@ -131,10 +166,13 @@ contract DSCControllerTest is Test {
 
     function testRevertIfBelowMinHealthFactor() public {
         vm.startPrank(user);
-        ERC20Mock(weth).mint(user, depositAmount);
-        ERC20Mock(weth).approve(address(controller), depositAmount);
-        controller.deposit(weth, user, depositAmount);
-        uint256 collateralValue = controller.getUSDAmount(weth, depositAmount);
+        ERC20Mock(weth).mint(user, wethDepositAmount);
+        ERC20Mock(weth).approve(address(controller), wethDepositAmount);
+        controller.deposit(weth, user, wethDepositAmount);
+        uint256 collateralValue = controller.getUSDAmount(
+            weth,
+            wethDepositAmount
+        );
         uint256 mintDSCAmount = collateralValue;
         uint256 expectedHealthFactor = (collateralValue *
             controller.PRECISION()) / (mintDSCAmount);
@@ -150,9 +188,9 @@ contract DSCControllerTest is Test {
 
     function testMintCorrectDSCAmount() public {
         vm.startPrank(user);
-        ERC20Mock(weth).mint(user, depositAmount);
-        ERC20Mock(weth).approve(address(controller), depositAmount);
-        controller.deposit(weth, user, depositAmount);
+        ERC20Mock(weth).mint(user, wethDepositAmount);
+        ERC20Mock(weth).approve(address(controller), wethDepositAmount);
+        controller.deposit(weth, user, wethDepositAmount);
         controller.mintDSC(mintAmount);
         (uint256 userMintedDSC, ) = controller.getUserData(user);
         assertEq(userMintedDSC, mintAmount);
@@ -161,34 +199,37 @@ contract DSCControllerTest is Test {
 
     function testCanDepositAndMintDSCAmount() public {
         vm.startPrank(user);
-        ERC20Mock(weth).mint(user, depositAmount);
-        ERC20Mock(weth).approve(address(controller), depositAmount);
-        controller.depositAndMint(weth, depositAmount, mintAmount);
+        ERC20Mock(weth).mint(user, wethDepositAmount);
+        ERC20Mock(weth).approve(address(controller), wethDepositAmount);
+        controller.depositAndMint(weth, wethDepositAmount, mintAmount);
         (uint256 userMintedDSC, ) = controller.getUserData(user);
-        assertEq(controller.getUserCollateralAmount(user, weth), depositAmount);
+        assertEq(
+            controller.getUserCollateralAmount(user, weth),
+            wethDepositAmount
+        );
         assertEq(userMintedDSC, mintAmount);
-        assertEq(ERC20Mock(weth).balanceOf(address(controller)), depositAmount);
+        assertEq(
+            ERC20Mock(weth).balanceOf(address(controller)),
+            wethDepositAmount
+        );
         assertEq(dscToken.balanceOf(user), mintAmount);
     }
 
-    // ************************** //
-    //      withdraw Collateral   //
-    // ************************** //
+    // ************************* //
+    //    withdraw Collateral    //
+    // ************************* //
 
-    modifier depositCollateral(address collateral) {
-        uint256 _depositAmount = collateral == weth
-            ? depositAmount
-            : wbtcDepositAmount;
+    modifier depositCollateral(address collateral, uint256 amount) {
         vm.startPrank(user);
-        ERC20Mock(collateral).mint(user, _depositAmount);
-        ERC20Mock(collateral).approve(address(controller), _depositAmount);
-        controller.deposit(collateral, user, _depositAmount);
+        ERC20Mock(collateral).mint(user, amount);
+        ERC20Mock(collateral).approve(address(controller), amount);
+        controller.deposit(collateral, user, amount);
         _;
     }
 
     modifier depositAndMintCollateral(address collateral) {
         uint256 _depositAmount = collateral == weth
-            ? depositAmount
+            ? wethDepositAmount
             : wbtcDepositAmount;
         vm.startPrank(user);
         ERC20Mock(collateral).mint(user, _depositAmount);
@@ -208,15 +249,15 @@ contract DSCControllerTest is Test {
                 address(token)
             )
         );
-        controller.withdraw(address(token), depositAmount);
+        controller.withdraw(address(token), wethDepositAmount);
     }
 
     function testRevertIfWithdrawMoreThanDeposit()
         public
-        depositCollateral(weth)
+        depositCollateral(weth, wethDepositAmount)
     {
         vm.expectRevert();
-        controller.withdraw(weth, 2 * depositAmount);
+        controller.withdraw(weth, 2 * wethDepositAmount);
     }
 
     function testRevertIfWithdrawBreaksHealthFactor()
@@ -224,14 +265,17 @@ contract DSCControllerTest is Test {
         depositAndMintCollateral(weth)
     {
         vm.expectRevert();
-        controller.withdraw(weth, depositAmount);
+        controller.withdraw(weth, wethDepositAmount);
     }
 
-    function testCanWithdrawWhenDidNotMintDSC() public depositCollateral(weth) {
+    function testCanWithdrawWhenDidNotMintDSC()
+        public
+        depositCollateral(weth, wethDepositAmount)
+    {
         uint256 userBeforeBalance = ERC20Mock(weth).balanceOf(user);
-        controller.withdraw(weth, depositAmount);
+        controller.withdraw(weth, wethDepositAmount);
         uint256 userAfterBalance = ERC20Mock(weth).balanceOf(user);
-        assertEq(userAfterBalance, userBeforeBalance + depositAmount);
+        assertEq(userAfterBalance, userBeforeBalance + wethDepositAmount);
         assertEq(controller.getUserCollateralAmount(user, weth), 0);
     }
 
@@ -242,7 +286,7 @@ contract DSCControllerTest is Test {
         uint256 userBeforeBalance = ERC20Mock(weth).balanceOf(user);
         // calculate amount to withdraw while not breaking health factor
         // choose amount that make HF equal 3e18
-        uint256 withdrawAmount = (depositAmount * 1e18) / (3e18);
+        uint256 withdrawAmount = (wethDepositAmount * 1e18) / (3e18);
         uint256 expectedFinalCollateralAmount = controller
             .getUserCollateralAmount(user, weth) - withdrawAmount;
         controller.withdraw(weth, withdrawAmount);
@@ -256,9 +300,9 @@ contract DSCControllerTest is Test {
         );
     }
 
-    // ********************** //
-    //      Burn Collateral   //
-    // ********************** //
+    // ********************* //
+    //    Burn Collateral    //
+    // ********************* //
 
     function testRevertIfBurnMoreThanBalance()
         public
@@ -293,19 +337,19 @@ contract DSCControllerTest is Test {
         );
     }
 
-    // ***************************** //
-    //      burnAndWithdraw test     //
-    // ***************************** //
+    // ************************** //
+    //    burnAndWithdraw test    //
+    // ************************** //
 
     function testRevertIfBurnAndWithdrawBreaksHealthFactor()
         public
         depositAndMintCollateral(weth)
     {
         uint256 dscBurnAmount = mintAmount / 4;
-        uint256 withdrawAmount = (depositAmount * 90) / 100;
+        uint256 withdrawAmount = (wethDepositAmount * 90) / 100;
         uint256 collateralValue = controller.getUSDAmount(
             weth,
-            depositAmount - withdrawAmount
+            wethDepositAmount - withdrawAmount
         );
         uint256 remainingMintedAmount = mintAmount - dscBurnAmount;
         uint256 expectedHealthFactor = (collateralValue * 1e18) /
@@ -325,12 +369,12 @@ contract DSCControllerTest is Test {
         depositAndMintCollateral(weth)
     {
         uint256 dscBurnAmount = mintAmount / 2;
-        uint256 withdrawAmount = depositAmount / 2;
+        uint256 withdrawAmount = wethDepositAmount / 2;
         dscToken.approve(address(controller), dscBurnAmount);
         controller.burnAndWithdraw(weth, withdrawAmount, dscBurnAmount);
 
         (uint256 userMintedDSC, ) = controller.getUserData(user);
-        uint256 expectedCollateralAmount = depositAmount / 2;
+        uint256 expectedCollateralAmount = wethDepositAmount / 2;
         uint256 actualCollateralAmount = controller.getUserCollateralAmount(
             user,
             weth
@@ -339,9 +383,9 @@ contract DSCControllerTest is Test {
         assertEq(userMintedDSC, mintAmount - dscBurnAmount);
     }
 
-    // ********************* //
-    //      liquidate test   //
-    // ********************* //
+    // ******************** //
+    //    liquidate test    //
+    // ******************** //
 
     function testRevertIfLiquidateHealthyUser()
         public
@@ -430,13 +474,446 @@ contract DSCControllerTest is Test {
         );
     }
 
-    // ************************************* //
-    //    HF & collateral value calculation  //
-    // ************************************* //
+    // ******************************** //
+    //    executeFlashOperation test    //
+    // ******************************** //
+    FlashloanReceiverMock public receiver;
+    uint256 public flashAmount = 10 ether;
+
+    function testRevertIfFlashOpsArePaused() public {
+        vm.startPrank(owner);
+        controller.pauseFlashOps(true);
+        vm.stopPrank();
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        vm.startPrank(user);
+        vm.expectRevert(FlashOperations.FlashOpsIsPaused.selector);
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfReceiverIsNotContract() public {
+        vm.startPrank(user);
+        vm.expectRevert(FlashOperations.InvalidFlashOp.selector);
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfZeroFlashloanAmount() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        vm.startPrank(user);
+        vm.expectRevert(FlashOperations.InvalidFlashOp.selector);
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            0,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfNotDSCTokenInFlashMint() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        vm.startPrank(user);
+        vm.expectRevert(FlashOperations.InvalidFlashOp.selector);
+        controller.executeFlashOperation(
+            receiver,
+            weth,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfNotAllowedTokenInFlashLoan() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        address randomERC20 = address(new ERC20Mock());
+        vm.startPrank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DSCController.NotAllowedCollateral.selector,
+                randomERC20
+            )
+        );
+        controller.executeFlashOperation(
+            receiver,
+            randomERC20,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.LOAN
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfDoesNotPayFlashMintFee() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        vm.startPrank(user);
+        vm.expectRevert();
+        // receiver contract will not have enough DSC token to pay fee
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfFlashLoanCallbackReturnFalse() public {
+        BadFlashloanReceiverMock badReceiver = new BadFlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        vm.startPrank(user);
+        vm.expectRevert(FlashOperations.FlashOpsFailed.selector);
+        // receiver contract will not have enough DSC token to pay fee
+        controller.executeFlashOperation(
+            badReceiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testShouldAllowUserToFlashMint() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some DSC tokens
+        vm.startPrank(address(controller));
+        dscToken.mint(address(receiver), 1 ether);
+        vm.stopPrank();
+
+        vm.startPrank(user);
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+    }
+
+    function testDSCTokenSupplyMustNotChangeOnFlashMint() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some DSC tokens
+        vm.startPrank(address(controller));
+        dscToken.mint(address(receiver), 1 ether);
+        vm.stopPrank();
+
+        uint256 beforeDSCSupply = dscToken.totalSupply();
+
+        vm.startPrank(user);
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+
+        uint256 afterDSCSupply = dscToken.totalSupply();
+        assertEq(afterDSCSupply, beforeDSCSupply);
+    }
+
+    function testShouldSendExactFlashMintFeeAmount() public {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some DSC tokens
+        vm.startPrank(address(controller));
+        dscToken.mint(address(receiver), 1 ether);
+        vm.stopPrank();
+
+        uint256 flashFeeBPS = controller.flashOpsFeeBPS();
+        uint256 expectedFeeAmount = (flashAmount * flashFeeBPS) / 1e18;
+        uint256 beforeRecipientBalance = dscToken.balanceOf(feeRecipient);
+
+        vm.startPrank(user);
+        controller.executeFlashOperation(
+            receiver,
+            address(dscToken),
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.MINT
+        );
+        vm.stopPrank();
+
+        uint256 afterRecipientBalance = dscToken.balanceOf(feeRecipient);
+        assertEq(
+            afterRecipientBalance,
+            beforeRecipientBalance + expectedFeeAmount
+        );
+    }
+
+    function testRevertIfFlashLoanAmountExceedCollateralBalance()
+        public
+        depositCollateral(weth, 5 ether)
+    {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some weth tokens
+        ERC20Mock(weth).mint(address(receiver), 1 ether);
+
+        vm.startPrank(user);
+        vm.expectRevert(FlashOperations.AmountExceedsBalance.selector);
+        controller.executeFlashOperation(
+            receiver,
+            weth,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.LOAN
+        );
+        vm.stopPrank();
+    }
+
+    function testRevertIfDoesNotPayFlashLoanFee()
+        public
+        depositCollateral(weth, 20 ether)
+    {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+        vm.startPrank(user);
+        vm.expectRevert();
+        // receiver contract will not have enough WETH to pay fee
+        controller.executeFlashOperation(
+            receiver,
+            weth,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.LOAN
+        );
+        vm.stopPrank();
+    }
+
+    function testShouldAllowUserToFlashLoan()
+        public
+        depositCollateral(weth, 20 ether)
+    {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some weth tokens
+        ERC20Mock(weth).mint(address(receiver), 1 ether);
+
+        vm.startPrank(user);
+        controller.executeFlashOperation(
+            receiver,
+            weth,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.LOAN
+        );
+        vm.stopPrank();
+    }
+
+    function testCollateralBalanceMustNotDecreaseOnFlashLoan()
+        public
+        depositCollateral(weth, 20 ether)
+    {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some weth tokens
+        ERC20Mock(weth).mint(address(receiver), 1 ether);
+        uint256 beforeControllerWethBalance = ERC20Mock(weth).balanceOf(
+            address(controller)
+        );
+
+        vm.startPrank(user);
+        controller.executeFlashOperation(
+            receiver,
+            weth,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.LOAN
+        );
+        vm.stopPrank();
+
+        uint256 afterControllerWethBalance = ERC20Mock(weth).balanceOf(
+            address(controller)
+        );
+        assertGe(afterControllerWethBalance, beforeControllerWethBalance);
+    }
+
+    function testShouldSendExactFlashLoanFeeAmount()
+        public
+        depositCollateral(weth, 20 ether)
+    {
+        receiver = new FlashloanReceiverMock(
+            address(controller),
+            address(dscToken),
+            weth,
+            wbtc
+        );
+
+        // mint receiver contract some weth tokens
+        ERC20Mock(weth).mint(address(receiver), 1 ether);
+
+        uint256 flashFeeBPS = controller.flashOpsFeeBPS();
+        uint256 expectedFeeAmount = (flashAmount * flashFeeBPS) / 1e18;
+        uint256 beforeRecipientBalance = ERC20Mock(weth).balanceOf(
+            feeRecipient
+        );
+
+        vm.startPrank(user);
+        controller.executeFlashOperation(
+            receiver,
+            weth,
+            flashAmount,
+            "",
+            FlashOperations.FlashOperationType.LOAN
+        );
+        vm.stopPrank();
+
+        uint256 afterRecipientBalance = ERC20Mock(weth).balanceOf(feeRecipient);
+        assertEq(
+            afterRecipientBalance,
+            beforeRecipientBalance + expectedFeeAmount
+        );
+    }
+
+    // ********************* //
+    //    Owner Functions    //
+    // ********************* //
+
+    function testRevertIfNewFeeRecipientIsZeroAddress() public {
+        address newRecipient = address(0);
+        vm.startPrank(owner);
+        vm.expectRevert(FlashOperations.InvalidFeeRecipient.selector);
+        controller.setFeeRecipient(newRecipient);
+        vm.stopPrank();
+    }
+
+    function testOnlyOwnerCanSetFeeRecipient() public {
+        address newRecipient = address(42);
+        vm.startPrank(user);
+        vm.expectRevert(); // only owner
+        controller.setFeeRecipient(newRecipient);
+        vm.stopPrank();
+
+        vm.startPrank(owner);
+        controller.setFeeRecipient(newRecipient);
+        assertEq(controller.feeRecipient(), newRecipient);
+        vm.stopPrank();
+    }
+
+    function testRevertIfNewFeeBPSIsAboveMaxBound() public {
+        uint256 newFeeBPS = 1e17; // 10%
+        vm.startPrank(owner);
+        vm.expectRevert(FlashOperations.InvalidFeeBPS.selector);
+        controller.setFlashOpsFee(newFeeBPS);
+        vm.stopPrank();
+    }
+
+    function testOnlyOwnerCanSetFeeBPS() public {
+        uint256 newFeeBPS = 1e15; // 0.1%
+        vm.startPrank(user);
+        vm.expectRevert();
+        controller.setFlashOpsFee(newFeeBPS);
+        vm.stopPrank();
+
+        vm.startPrank(owner);
+        controller.setFlashOpsFee(newFeeBPS);
+        assertEq(controller.flashOpsFeeBPS(), newFeeBPS);
+        vm.stopPrank();
+    }
+
+    function testOnlyOwnerCanPauseFlashOperations() public {
+        vm.startPrank(user);
+        vm.expectRevert();
+        controller.pauseFlashOps(true);
+        vm.stopPrank();
+
+        vm.startPrank(owner);
+        controller.pauseFlashOps(true);
+        assertEq(controller.flashOpsPaused(), true);
+        vm.stopPrank();
+    }
+
+    // *************************************** //
+    //    HF & collateral value calculation    //
+    // *************************************** //
 
     function testHealthFactorIsMaxWhenUserHasNotMinted()
         public
-        depositCollateral(weth)
+        depositCollateral(weth, wethDepositAmount)
     {
         (uint256 userDSCMinted, ) = controller.getUserData(user);
         uint256 healthFactor = controller.healthFactor(user);
@@ -457,10 +934,13 @@ contract DSCControllerTest is Test {
 
     function testCalculateCorrectCollateralUsdValue()
         public
-        depositCollateral(weth)
-        depositCollateral(wbtc)
+        depositCollateral(weth, wethDepositAmount)
+        depositCollateral(wbtc, wbtcDepositAmount)
     {
-        uint256 wethValueInUsd = controller.getUSDAmount(weth, depositAmount);
+        uint256 wethValueInUsd = controller.getUSDAmount(
+            weth,
+            wethDepositAmount
+        );
         uint256 wbtcValueInUsd = controller.getUSDAmount(
             wbtc,
             wbtcDepositAmount
@@ -472,9 +952,9 @@ contract DSCControllerTest is Test {
         assertEq(userCollateralValueInUsd, expectedCollateralUsdValue);
     }
 
-    // ******************** //
-    //    Price feed test   //
-    // ******************** //
+    // ********************* //
+    //    Price feed test    //
+    // ********************* //
 
     function testReturnCorrectUsdAmount() public {
         // Note returned USD amount from getUSDAmount are always scaled by 1e18
