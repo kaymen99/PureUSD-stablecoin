@@ -20,6 +20,8 @@ The project is built with foundry and uses the Openzeppelin and Chainlink as ext
   
 * **Protocol Fee**: The protocol only implements fees on flashloan operations, capped at a maximum of 1% of the amount borrowed.
 
+* **Trusted Roles**: The protocol controller contract will be owned by the admin, who will only be allowed to perform the following operations: set a new flashloan fee, set a new fee recipient, pause or unpause flashloan operations. This admin will not have any access/control to the users colateral funds or to the DSC token minting/burning mechanism.
+
 ## Quick Start
 
 ```shell
