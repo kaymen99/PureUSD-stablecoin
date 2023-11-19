@@ -11,6 +11,9 @@ contract DeployDSC is Script {
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
 
+    address public owner = address(1);
+    address public feeRecipient = address(2);
+
     function run() external returns (DSCToken, DSCController, HelperConfig) {
         HelperConfig config = new HelperConfig();
 
@@ -30,7 +33,8 @@ contract DeployDSC is Script {
         DSCToken dscToken = new DSCToken();
         DSCController controller = new DSCController(
             address(dscToken),
-            msg.sender,
+            owner,
+            feeRecipient,
             tokenAddresses,
             priceFeedAddresses
         );
