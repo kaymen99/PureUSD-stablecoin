@@ -1,4 +1,4 @@
-# Algorithmic Stablecoin
+# PureUSD Stablecoin
 
 This protocol is a custom algorithmic stablecoin system, where the DSC token is pegged to the USD price at a 1:1 ratio (1 DSC = 1 $). The DSC token will be backed by two collateral tokens (ERC20): WETH and WBTC. Users can deposit either or both of these tokens and mint DSC tokens, they can hold the DSC tokens as long as their collateralization remains above the liquidation threshold (collateral value must be greater than double the minted DSC value, indicating a 200% collateralization ratio).
 
