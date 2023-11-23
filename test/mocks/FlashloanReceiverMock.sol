@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
+
 pragma solidity ^0.8.0;
 
 import {IFlashloanReceiver} from "../../src/interfaces/IFlashloanReceiver.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @title Extension to Openzeppelin ERC20Mock contract
+/// @title Simple FlashloanReceiver mock
 /// @author kaymen99
-/// @notice Allows to specify the decimal number of mock token
+/// @notice will do anything with flashlaoned amount
 contract FlashloanReceiverMock is IFlashloanReceiver {
     constructor(
         address pUSDController,
@@ -32,6 +33,10 @@ contract FlashloanReceiverMock is IFlashloanReceiver {
     }
 }
 
+/// @title Bad FlashloanReceiver implementation mock
+/// @author kaymen99
+/// @dev will always return false in ´onFlashLoan´ callback
+/// @dev should always cause flashloan transaction to revert
 contract BadFlashloanReceiverMock is IFlashloanReceiver {
     constructor(
         address pUSDController,
