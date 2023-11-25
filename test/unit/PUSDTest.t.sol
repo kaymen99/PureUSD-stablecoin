@@ -14,6 +14,10 @@ contract PUSDTest is Test {
         pUSDToken = new PUSD();
     }
 
+    // ********** //
+    //    mint    //
+    // ********** //
+
     function testMintToZeroAddress() public {
         vm.prank(pUSDToken.owner());
         vm.expectRevert(PUSD.InvalidMint.selector);
@@ -38,13 +42,17 @@ contract PUSDTest is Test {
         assertEq(pUSDToken.balanceOf(address(this)), 1000);
     }
 
+    // ********** //
+    //    burn    //
+    // ********** //
+
     function testBurnZeroAmount() public {
         vm.prank(pUSDToken.owner());
         vm.expectRevert(PUSD.InvalidBurnAmount.selector);
         pUSDToken.burn(0);
     }
 
-    function testBurnMoreThanBalance() public {
+    function testCanNotBurnMoreThanBalance() public {
         vm.prank(pUSDToken.owner());
         vm.expectRevert(PUSD.AmountExceedsBalance.selector);
         pUSDToken.burn(1000);
@@ -57,5 +65,32 @@ contract PUSDTest is Test {
         assertEq(pUSDToken.balanceOf(owner), 1000);
         pUSDToken.burn(1000);
         assertEq(pUSDToken.balanceOf(owner), 0);
+    }
+
+    // ************** //
+    //    burnFrom    //
+    // ************** //
+
+    function testBurnFromZeroAmount() public {
+        vm.prank(pUSDToken.owner());
+        pUSDToken.mint(user, 1000);
+        vm.expectRevert(PUSD.InvalidBurnAmount.selector);
+        pUSDToken.burnFrom(user, 0);
+    }
+
+    function testCanNotBurnFromMoreThanBalance() public {
+        vm.prank(pUSDToken.owner());
+        pUSDToken.mint(user, 1000);
+        vm.expectRevert(PUSD.AmountExceedsBalance.selector);
+        pUSDToken.burnFrom(user, 2000);
+    }
+
+    function testBurnFromAmount() public {
+        address owner = pUSDToken.owner();
+        vm.prank(owner);
+        pUSDToken.mint(user, 1000);
+        assertEq(pUSDToken.balanceOf(user), 1000);
+        pUSDToken.burnFrom(user, 500);
+        assertEq(pUSDToken.balanceOf(user), 500);
     }
 }
