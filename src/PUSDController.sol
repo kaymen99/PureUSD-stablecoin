@@ -22,10 +22,10 @@ contract PUSDController is Ownable, FlashOperations {
     uint256 public constant DEFAULT_LIQUIDATION_FACTOR = 0.5e18;
     // 5% of collateral given to liquidator as bonus
     uint256 public constant LIQUIDATION_REWARD = 0.05e18;
-    // Collateral value must be equal double the value of PUSD minted
+    // Collateral value must be equal 1.5x the value of PUSD minted
     // Using 150% overcollateralization
     uint256 public constant MIN_HEALTH_FACTOR = 1.5e18;
-    // Below 135% collateralization ration full liquidation is allowed
+    // Below 135% collateralization ratio full liquidation is allowed
     uint256 public constant LIQUIDATION_CLOSE_FACTOR = 1.35e18;
 
     IPUSD private immutable pUSD;
@@ -176,7 +176,7 @@ contract PUSDController is Ownable, FlashOperations {
         if (userHealthFactor >= MIN_HEALTH_FACTOR)
             revert InvalidLiquidation(user);
 
-        // If user HF above 180% ratio then can liquidated up to 50% of PUSD
+        // If user HF above 135% ratio then can liquidated up to 50% of PUSD
         // else all user minted PUSD can be liquidated
         uint256 maxPUSDToLiquidate = userHealthFactor >=
             LIQUIDATION_CLOSE_FACTOR
