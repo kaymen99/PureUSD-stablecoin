@@ -18,11 +18,15 @@ contract PUSDController is Ownable, FlashOperations {
 
     // default precision used for price calculations
     uint256 public constant PRECISION = 1e18;
+    // By default up to 50% of collateral can be liquidated
+    uint256 public constant DEFAULT_LIQUIDATION_FACTOR = 0.5e18;
     // 5% of collateral given to liquidator as bonus
     uint256 public constant LIQUIDATION_REWARD = 0.05e18;
     // Collateral value must be equal double the value of PUSD minted
-    // Using 200% overcollateralization
-    uint256 public constant MIN_HEALTH_FACTOR = 2e18;
+    // Using 150% overcollateralization
+    uint256 public constant MIN_HEALTH_FACTOR = 1.5e18;
+    // Below 135% collateralization ration full liquidation is allowed
+    uint256 public constant LIQUIDATION_CLOSE_FACTOR = 1.35e18;
 
     IPUSD private immutable pUSD;
 
@@ -59,6 +63,14 @@ contract PUSDController is Ownable, FlashOperations {
     );
     event AllowCollateral(address collateral);
 
+    /**
+     * @dev Constructor for the main Pool contract.
+     * @param pUSDTokenAddress The address of the pUSD token.
+     * @param admin The address of the contract owner.
+     * @param _feeRecipient The address to receive flash fees collected by the pool.
+     * @param collaterals An array of supported collateral token addresses (WETH/WBTC).
+     * @param priceFeeds An array of corresponding Chainlink price feed addresses for each collateral.
+     */
     constructor(
         address pUSDTokenAddress,
         address admin,
@@ -164,6 +176,16 @@ contract PUSDController is Ownable, FlashOperations {
         if (userHealthFactor >= MIN_HEALTH_FACTOR)
             revert InvalidLiquidation(user);
 
+        // If user HF above 180% ratio then can liquidated up to 50% of PUSD
+        // else all user minted PUSD can be liquidated
+        uint256 maxPUSDToLiquidate = userHealthFactor >=
+            LIQUIDATION_CLOSE_FACTOR
+            ? (mintedBalances[user] * DEFAULT_LIQUIDATION_FACTOR) / PRECISION
+            : mintedBalances[user];
+        pUSDToLiquidate = pUSDToLiquidate > maxPUSDToLiquidate
+            ? maxPUSDToLiquidate
+            : pUSDToLiquidate;
+        // convert PUSD value to collateral amount
         uint256 collateralAmount = getTokenAmountFromUSD(
             collateral,
             pUSDToLiquidate
@@ -172,7 +194,6 @@ contract PUSDController is Ownable, FlashOperations {
             PRECISION;
         uint256 totalCollateralToLiquidate = collateralAmount +
             liquidationReward;
-
         if (totalCollateralToLiquidate > collateralBalances[user][collateral])
             revert InsufficientCollateralBalance();
         _withdraw(user, msg.sender, collateral, totalCollateralToLiquidate);

@@ -53,9 +53,9 @@ contract Handler is Test {
         address sender = depositors[senderSeed % length];
         (uint256 totalPUSDMinted, uint256 totalCollateralInUSD) = controller
             .getUserData(sender);
-        // Must not break health factor ==> 2 * totalCollateralInUSD > totalPUSDMinted
+        // Must not break health factor ==> 1.5 * totalCollateralInUSD > totalPUSDMinted
         int256 maxPUSDToMint = int256(
-            (totalCollateralInUSD / 2) - totalPUSDMinted
+            ((totalCollateralInUSD * 1e18) / 1.5e18) - totalPUSDMinted
         );
         if (maxPUSDToMint <= 0) return;
         amount = bound(amount, 1, uint256(maxPUSDToMint));

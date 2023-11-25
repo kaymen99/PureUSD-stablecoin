@@ -23,9 +23,9 @@ contract PUSDControllerTest is Test {
     address public owner = address(1);
     address public feeRecipient = address(2);
     address public user = address(3);
-    uint256 public wethDepositAmount = 3 ether; // 3 ETH
-    uint256 public wbtcDepositAmount = 10e8; // 10 WBTC
-    uint256 public mintAmount = 1000 ether; // 1000 USD = 1000 PUSD
+    uint256 public wethDepositAmount = 5 ether; // 5 ETH
+    uint256 public wbtcDepositAmount = 2e8; // 2 WBTC
+    uint256 public mintAmount = 5000 ether; // 5000 USD = 5000 PUSD
 
     function setUp() public {
         deployer = new DeployPUSD();
@@ -49,8 +49,11 @@ contract PUSDControllerTest is Test {
         assertEq(address(controller.owner()), owner);
     }
 
-    function testFeeRecipientAddressSet() public {
-        assertEq(address(controller.feeRecipient()), feeRecipient);
+    function testCorrectFlashDataSet() public {
+        FlashOperations.FlashData memory data = controller.getFlashData();
+        assertEq(data.feeRecipient, feeRecipient);
+        assertEq(data.flashOpsFeeBPS, 3e15);
+        assertEq(data.flashOpsPaused, false);
     }
 
     function testRevertIfFeeRecipientIsZeroAddress() public {
@@ -106,7 +109,7 @@ contract PUSDControllerTest is Test {
     }
 
     // *********************************** //
-    //    Deposit Collateral & Mint PUSD    //
+    //    Deposit Collateral & Mint PUSD   //
     // *********************************** //
 
     function testRevertIfDepositZeroAmount() public {
@@ -182,7 +185,7 @@ contract PUSDControllerTest is Test {
                 expectedHealthFactor
             )
         );
-        // Try mint a very amount of PUSD equivalent to collateral value in USD => user health factor will be below minimum
+        // Try mint an amount of PUSD equivalent to collateral value in USD => user health factor will be below minimum
         controller.mintPUSD(mintPUSDAmount);
     }
 
@@ -285,8 +288,8 @@ contract PUSDControllerTest is Test {
     {
         uint256 userBeforeBalance = ERC20Mock(weth).balanceOf(user);
         // calculate amount to withdraw while not breaking health factor
-        // choose amount that make HF equal 3e18
-        uint256 withdrawAmount = (wethDepositAmount * 1e18) / (3e18);
+        // choose amount that let HF above 1.5e18
+        uint256 withdrawAmount = 1 ether;
         uint256 expectedFinalCollateralAmount = controller
             .getUserCollateralAmount(user, weth) - withdrawAmount;
         controller.withdraw(weth, withdrawAmount);
@@ -431,29 +434,25 @@ contract PUSDControllerTest is Test {
         vm.startPrank(liquidator);
 
         // Mint PUSD token to liquidator in order to repay user debt
-        ERC20Mock(wbtc).mint(liquidator, 10e8);
-        ERC20Mock(wbtc).approve(address(controller), 10e8);
-        controller.depositAndMint(wbtc, 10e8, mintAmount);
-        controller.mintPUSD(mintAmount);
+        ERC20Mock(wbtc).mint(liquidator, wbtcDepositAmount);
+        ERC20Mock(wbtc).approve(address(controller), wbtcDepositAmount);
+        controller.depositAndMint(wbtc, wbtcDepositAmount, mintAmount);
         pUSDToken.approve(address(controller), mintAmount);
 
         // Drop ETH/USD price to simulate user getting below health factor
         MockV3Aggregator wethPriceFeedMock = MockV3Aggregator(wethUSDPriceFeed);
-        wethPriceFeedMock.updateAnswer(500e8);
-        // 1 ETH = 500 USD => userHF = (3*500*1e18)/1000 = 1.5e18 < 2e18
+        wethPriceFeedMock.updateAnswer(1400e8);
+        // 1 ETH = 1400 USD => userHF = (5*1400*1e18)/5000 = 1.4e18 < 1.5e18
         uint256 userHealthFactor = controller.healthFactor(user);
-        assertEq(userHealthFactor, 1.5e18);
+        assertEq(userHealthFactor, 1.4e18);
 
+        uint256 userPUSDBalBefore = pUSDToken.balanceOf(user);
         uint256 userCollateralAmountBefore = controller.getUserCollateralAmount(
             user,
             weth
         );
-        uint256 pUSDAmountToLiquidate = mintAmount;
-        uint256 collateralLiquidateAmount = controller.getTokenAmountFromUSD(
-            weth,
-            pUSDAmountToLiquidate
-        );
 
+        uint256 pUSDAmountToLiquidate = mintAmount;
         // Liquidate user
         controller.liquidate(user, weth, pUSDAmountToLiquidate);
 
@@ -465,9 +464,70 @@ contract PUSDControllerTest is Test {
             user,
             weth
         );
-        assertEq(mintedPUSD, 0);
+
+        // user HF is above 135% ratio so can only liquidate up to 50% of collateral
+        uint256 expectedLiquidatedPUSDAmount = pUSDAmountToLiquidate / 2;
+        uint256 collateralLiquidateAmount = controller.getTokenAmountFromUSD(
+            weth,
+            expectedLiquidatedPUSDAmount
+        );
         uint256 expectedCollateralAmountDecrease = (collateralLiquidateAmount *
             (1e18 + controller.LIQUIDATION_REWARD())) / 1e18;
+        assertEq(mintedPUSD, userPUSDBalBefore - expectedLiquidatedPUSDAmount);
+        assertEq(
+            userCollateralAmountAfter,
+            userCollateralAmountBefore - expectedCollateralAmountDecrease
+        );
+    }
+
+    function testCanDoFullLiquidationIfBelow135HF()
+        public
+        depositAndMintCollateral(weth)
+    {
+        address liquidator = address(2);
+        vm.startPrank(liquidator);
+
+        // Mint PUSD token to liquidator in order to repay user debt
+        ERC20Mock(wbtc).mint(liquidator, wbtcDepositAmount);
+        ERC20Mock(wbtc).approve(address(controller), wbtcDepositAmount);
+        controller.depositAndMint(wbtc, wbtcDepositAmount, mintAmount);
+        pUSDToken.approve(address(controller), mintAmount);
+
+        // Drop ETH/USD price to simulate user getting below health factor
+        MockV3Aggregator wethPriceFeedMock = MockV3Aggregator(wethUSDPriceFeed);
+        wethPriceFeedMock.updateAnswer(1200e8);
+        // 1 ETH = 1200 USD => userHF = (5*1200*1e18)/5000 = 1.2e18 < 1.35e18
+        uint256 userHealthFactor = controller.healthFactor(user);
+        assertEq(userHealthFactor, 1.2e18);
+
+        uint256 userPUSDBalBefore = pUSDToken.balanceOf(user);
+        uint256 userCollateralAmountBefore = controller.getUserCollateralAmount(
+            user,
+            weth
+        );
+
+        uint256 pUSDAmountToLiquidate = mintAmount;
+        // Liquidate user
+        controller.liquidate(user, weth, pUSDAmountToLiquidate);
+
+        // Check health factor is above minimum
+        userHealthFactor = controller.healthFactor(user);
+        assert(userHealthFactor > controller.MIN_HEALTH_FACTOR());
+        (uint256 mintedPUSD, ) = controller.getUserData(user);
+        uint256 userCollateralAmountAfter = controller.getUserCollateralAmount(
+            user,
+            weth
+        );
+
+        // user HF is below 135% ratio so can liquidate up to 100% of collateral
+        uint256 expectedLiquidatedPUSDAmount = pUSDAmountToLiquidate;
+        uint256 collateralLiquidateAmount = controller.getTokenAmountFromUSD(
+            weth,
+            expectedLiquidatedPUSDAmount
+        );
+        uint256 expectedCollateralAmountDecrease = (collateralLiquidateAmount *
+            (1e18 + controller.LIQUIDATION_REWARD())) / 1e18;
+        assertEq(mintedPUSD, userPUSDBalBefore - expectedLiquidatedPUSDAmount);
         assertEq(
             userCollateralAmountAfter,
             userCollateralAmountBefore - expectedCollateralAmountDecrease
@@ -684,7 +744,8 @@ contract PUSDControllerTest is Test {
         pUSDToken.mint(address(receiver), 1 ether);
         vm.stopPrank();
 
-        uint256 flashFeeBPS = controller.flashOpsFeeBPS();
+        FlashOperations.FlashData memory data = controller.getFlashData();
+        uint256 flashFeeBPS = data.flashOpsFeeBPS;
         uint256 expectedFeeAmount = (flashAmount * flashFeeBPS) / 1e18;
         uint256 beforeRecipientBalance = pUSDToken.balanceOf(feeRecipient);
 
@@ -826,7 +887,8 @@ contract PUSDControllerTest is Test {
         // mint receiver contract some weth tokens
         ERC20Mock(weth).mint(address(receiver), 1 ether);
 
-        uint256 flashFeeBPS = controller.flashOpsFeeBPS();
+        FlashOperations.FlashData memory data = controller.getFlashData();
+        uint256 flashFeeBPS = data.flashOpsFeeBPS;
         uint256 expectedFeeAmount = (flashAmount * flashFeeBPS) / 1e18;
         uint256 beforeRecipientBalance = ERC20Mock(weth).balanceOf(
             feeRecipient
@@ -870,7 +932,8 @@ contract PUSDControllerTest is Test {
 
         vm.startPrank(owner);
         controller.setFeeRecipient(newRecipient);
-        assertEq(controller.feeRecipient(), newRecipient);
+        FlashOperations.FlashData memory data = controller.getFlashData();
+        assertEq(data.feeRecipient, newRecipient);
         vm.stopPrank();
     }
 
@@ -891,7 +954,8 @@ contract PUSDControllerTest is Test {
 
         vm.startPrank(owner);
         controller.setFlashOpsFee(newFeeBPS);
-        assertEq(controller.flashOpsFeeBPS(), newFeeBPS);
+        FlashOperations.FlashData memory data = controller.getFlashData();
+        assertEq(data.flashOpsFeeBPS, newFeeBPS);
         vm.stopPrank();
     }
 
@@ -903,7 +967,8 @@ contract PUSDControllerTest is Test {
 
         vm.startPrank(owner);
         controller.pauseFlashOps(true);
-        assertEq(controller.flashOpsPaused(), true);
+        FlashOperations.FlashData memory data = controller.getFlashData();
+        assertEq(data.flashOpsPaused, true);
         vm.stopPrank();
     }
 
@@ -967,10 +1032,10 @@ contract PUSDControllerTest is Test {
         assertEq(returnedAmount, expectedUSDAmount);
 
         // Test WBTC token
-        // we set 1 wbtc = 1000 USD
-        // So for 10 WBTC we should get 10000USD
+        // we set 1 wbtc = 30000 USD
+        // So for 10 WBTC we should get 300000USD
         uint256 btcAmount = 10e8; // WBTC has 8 decimals
-        expectedUSDAmount = 10000e18;
+        expectedUSDAmount = 300000e18;
         returnedAmount = controller.getUSDAmount(wbtc, btcAmount);
         assertEq(returnedAmount, expectedUSDAmount);
     }
@@ -988,9 +1053,9 @@ contract PUSDControllerTest is Test {
         assertEq(returnedAmount, expectedWethAmount);
 
         // Test WBTC token
-        // we set 1 wbtc = 1000 USD
-        // So for 500 USD we should get 0.5 WBTC = 5e7 WBTC
-        usdAmount = 500e18;
+        // we set 1 wbtc = 30000 USD
+        // So for 15000 USD we should get 0.5 WBTC = 5e7 WBTC
+        usdAmount = 15000e18;
         uint256 expectedWbtcAmount = 5e7; // 0.5 WBTC
         returnedAmount = controller.getTokenAmountFromUSD(wbtc, usdAmount);
         assertEq(returnedAmount, expectedWbtcAmount);

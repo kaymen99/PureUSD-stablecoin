@@ -11,6 +11,9 @@ import "./interfaces/IPUSD.sol";
 /// @notice Contract for executing flash operations including flash mint and flash loan
 /// @dev Will allow users to perform flash mint of PUSD token or to flashloan collateral tokens kept in the controller contract.
 abstract contract FlashOperations {
+    /// @dev Maximum fee for flash operations
+    uint256 public constant MAX_FEE = 1e16; // 1%
+
     // can flashmint PUSD token or flashloan allowed collateral tokens
     /// @dev Enum defining the types of flash operations: MINT or LOAN
     enum FlashOperationType {
@@ -18,15 +21,15 @@ abstract contract FlashOperations {
         LOAN
     }
 
-    /// @dev Maximum fee for flash operations
-    uint256 public constant MAX_FEE = 1e16; // 1%
-
-    /// @dev Address that will receive fees on flash operations, set by owner
-    address public feeRecipient;
-    /// @dev Flag indicating whether flash operations are paused
-    bool public flashOpsPaused;
-    /// @dev Maximum fee percentage for flash operations, set by owner
-    uint256 public flashOpsFeeBPS = 3e15; // 0.3%
+    struct FlashData {
+        /// @dev Address that will receive fees on flash operations, set by owner
+        address feeRecipient;
+        /// @dev Maximum fee percentage for flash operations, set by owner
+        uint64 flashOpsFeeBPS;
+        /// @dev Flag indicating whether flash operations are paused
+        bool flashOpsPaused;
+    }
+    FlashData public flashData;
 
     /// @dev Event emitted when the fee recipient is set
     event SetFeeRecipient(
@@ -49,6 +52,7 @@ abstract contract FlashOperations {
 
     constructor(address _feeRecipient) {
         _setFeeRecipient(_feeRecipient);
+        _setFlashOpsFee(3e15); // 0.3%
     }
 
     // ***************** //
@@ -70,7 +74,7 @@ abstract contract FlashOperations {
         bytes calldata params,
         FlashOperationType opType
     ) external returns (bool) {
-        if (flashOpsPaused) revert FlashOpsIsPaused();
+        if (flashData.flashOpsPaused) revert FlashOpsIsPaused();
         if (address(receiver).code.length == 0 || amount == 0)
             revert InvalidFlashOp();
         if (opType == FlashOperationType.MINT) {
@@ -81,6 +85,11 @@ abstract contract FlashOperations {
             _runFlashLoan(receiver, token, amount, params);
         }
         return true;
+    }
+
+    /// @notice Obtain flash data parameeters.
+    function getFlashData() external view returns (FlashData memory) {
+        return flashData;
     }
 
     /// @notice internal function for flashMint logic
@@ -96,7 +105,7 @@ abstract contract FlashOperations {
     ) internal {
         IPUSD token = PUSDToken();
         uint256 pUSDSupplyBefore = token.totalSupply();
-        uint256 fee = (amount * flashOpsFeeBPS) / 1e18;
+        uint256 fee = (amount * flashData.flashOpsFeeBPS) / 1e18;
 
         // mint PUSD token amount to
         token.mint(address(receiver), amount);
@@ -112,10 +121,14 @@ abstract contract FlashOperations {
 
         // transfer minted amount plus fee from user to fee recipient
         // saves gas by avoiding double transfer operations
-        token.transferFrom(address(receiver), feeRecipient, amount + fee);
+        token.transferFrom(
+            address(receiver),
+            flashData.feeRecipient,
+            amount + fee
+        );
 
         // fee recipient keeps only fee, burn remaining amount
-        token.burnFrom(feeRecipient, amount);
+        token.burnFrom(flashData.feeRecipient, amount);
 
         // check that PUSD total supply did not change
         uint256 pUSDSupplyAfter = token.totalSupply();
@@ -139,7 +152,7 @@ abstract contract FlashOperations {
     ) internal {
         uint256 balanceBefore = TokenHelper.balanceOf(token, address(this));
         if (amount > balanceBefore) revert AmountExceedsBalance();
-        uint256 fee = (amount * flashOpsFeeBPS) / 1e18;
+        uint256 fee = (amount * flashData.flashOpsFeeBPS) / 1e18;
 
         // mint PUSD token amount to
         TokenHelper.transferToken(
@@ -167,7 +180,12 @@ abstract contract FlashOperations {
         );
 
         // transfer fee to fee recipient
-        TokenHelper.transferToken(token, address(this), feeRecipient, fee);
+        TokenHelper.transferToken(
+            token,
+            address(this),
+            flashData.feeRecipient,
+            fee
+        );
 
         // check that internal token balance did not decrease
         uint256 balanceAfter = TokenHelper.balanceOf(token, address(this));
@@ -177,20 +195,20 @@ abstract contract FlashOperations {
     /// @notice internal function to set new fee recipient
     function _setFeeRecipient(address recipient) internal {
         if (recipient == address(0)) revert InvalidFeeRecipient();
-        emit SetFeeRecipient(feeRecipient, recipient);
-        feeRecipient = recipient;
+        emit SetFeeRecipient(flashData.feeRecipient, recipient);
+        flashData.feeRecipient = recipient;
     }
 
     /// @notice internal function for set new fee
     function _setFlashOpsFee(uint256 newFee) internal {
         if (newFee > MAX_FEE) revert InvalidFeeBPS();
-        emit SetFlashOpsFee(flashOpsFeeBPS, newFee);
-        flashOpsFeeBPS = newFee;
+        emit SetFlashOpsFee(flashData.flashOpsFeeBPS, newFee);
+        flashData.flashOpsFeeBPS = uint64(newFee);
     }
 
     /// @notice internal function to change paused state
     function _pauseFlashOps(bool pause) internal {
-        flashOpsPaused = pause;
+        flashData.flashOpsPaused = pause;
         emit FlashOpsPaused(pause);
     }
 

@@ -14,8 +14,8 @@ contract HelperConfig is Script {
 
     // USD Chainlink oracle are given in 8 decimals
     uint8 public constant PRICE_DECIMALS = 8;
-    int256 public constant ETH_USD_PRICE = 2000e8;
-    int256 public constant BTC_USD_PRICE = 1000e8;
+    int256 public constant ETH_USD_PRICE = 2000e8; // 1 ETH = 2000$
+    int256 public constant BTC_USD_PRICE = 30000e8; // 1 BTC = 30000$
 
     struct Config {
         address weth;
